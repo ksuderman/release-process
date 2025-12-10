@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Galaxy K8S Version Dashboard</title>
+    <title>Galaxy Versions Dashboard</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 40px; }
         .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin: 10px; display: inline-block; min-width: 250px; }
@@ -14,16 +14,19 @@
     </style>
 </head>
 <body>
-    <h1>Galaxy K8S Version Dashboard</h1>
+    <h1>Galaxy Versions Dashboard</h1>
     <p id="loading">Loading versions...</p>
     <div id="dashboard"></div>
 
     <script>
         async function fetchVersions() {
             const repos = {
-                'galaxy-helm': { chart: 'galaxy/Chart.yaml', type: 'helm' },
-                'galaxy-helm-deps': { chart: 'galaxy-deps/Chart.yaml', type: 'helm' },
-                'galaxy-k8s-boot': { version: 'VERSION', defaults: 'roles/galaxy_k8s_deployment/defaults/main.yml' }
+                'galaxy': { type: 'git', org: 'galaxyproject' },
+                'galaxy-helm': { chart: 'galaxy/Chart.yaml', type: 'helm', org: 'galaxyproject' },
+                'galaxy-helm-deps': { chart: 'galaxy-deps/Chart.yaml', type: 'helm', org: 'galaxyproject' },
+                'galaxykubeman-helm': { chart: 'galaxykubeman-helm/Chart.yaml', type: 'helm', org: 'galaxyproject' },
+                'galaxy-cvmfs-csi-helm': { chart: 'galaxy-cvmfs-csi/Chart.yaml', type: 'helm', org: 'cloudve' },
+                'galaxy-k8s-boot': { version: 'VERSION', defaults: 'roles/galaxy_k8s_deployment/defaults/main.yml', org: 'galaxyproject' }
             };
 
             const dashboard = document.getElementById('dashboard');
@@ -34,12 +37,12 @@
                 card.className = 'card';
 
                 // Fetch release
-                const releaseRes = await fetch(`https://api.github.com/repos/galaxyproject/${repo}/releases/latest`);
+                const releaseRes = await fetch(`https://api.github.com/repos/${config.org}/${repo}/releases/latest`);
                 const release = await releaseRes.json();
 
                 let html = `<h3>${repo}</h3>`;
                 html += `<div class="label">Latest Release</div>`;
-                html += `<div class="version">${release.tag_name || 'N/A'}</div>`;
+                html += `<div class="version">${release.tag_name || '0.0.0'}</div>`;
 
                 card.innerHTML = html;
                 dashboard.appendChild(card);

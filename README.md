@@ -7,9 +7,38 @@ The purpose of this repository is to coordinate the refatoring of the release pr
 - [Galaxy K8S Boot](https://github.com/galaxyproject/galaxy-k8s-boot) playbook.
 - [Cloudve Helm Repository](https://github.com/CloudVE/helm-charts).
 
-I haven't included the Galaxy Kubeman chart, but we could if we wanted.
+I haven't included Galaxy Kubeman, the CVMFS CSI chart, or the galaxy-k8s-docker playbook, but we like should for completeness.
 
 The goal is to make the process consistent across all repositories and automate the process as much as possible.  Ideally all we will need to do is approve pull requests and let the magic happen.  This requires a consistent repository layout and process even if it does not make much sense for the particular repository, e.g., we probably won't update the Galaxy dependencies very often, but by using the same release process we don't have to remember respository specific procedures.
+
+## Current Versions
+
+### Galaxy Helm Chart
+
+![Version](https://img.shields.io/github/v/release/galaxyproject/galaxy-helm?label=chart%20version)
+![Kubernetes](https://img.shields.io/badge/kubernetes-1.28%20--%201.32-blue)
+![Galaxy](https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/galaxyproject/galaxy-helm/master/galaxy/Chart.yaml&query=$.appVersion&label=galaxy%20version)
+
+[![CI](https://github.com/galaxyproject/galaxy-helm/actions/workflows/test.yaml/badge.svg)](https://github.com/galaxyproject/galaxy-helm/actions/workflows/test.yaml)
+[![Release](https://github.com/galaxyproject/galaxy-helm/actions/workflows/packaging.yml/badge.svg)](https://github.com/galaxyproject/galaxy-helm/actions/workflows/release.yaml)
+
+### Galaxy Dependencies Helm Chart
+
+![Version](https://img.shields.io/github/v/release/galaxyproject/galaxy-helm-deps?label=chart%20version)
+![Kubernetes](https://img.shields.io/badge/kubernetes-1.28%20--%201.32-blue)
+
+[![CI](https://github.com/galaxyproject/galaxy-helm-deps/actions/workflows/test.yaml/badge.svg)](https://github.com/galaxyproject/galaxy-helm-deps/actions/workflows/test.yaml)
+[![Release](https://github.com/galaxyproject/galaxy-helm-deps/actions/workflows/packaging.yml/badge.svg)](https://github.com/galaxyproject/galaxy-helm-deps/actions/workflows/release.yaml)
+
+### Galaxy K8S Boot
+
+![Version](https://img.shields.io/github/v/release/galaxyproject/galaxy-k8s-boot?label=version)
+![Galaxy Helm](https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/galaxyproject/galaxy-k8s-boot/master/roles/galaxy_k8s_deployment/defaults/main.yml&query=$.galaxy_chart_version&label=galaxy-helm)
+![Galaxy Deps](https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/galaxyproject/galaxy-k8s-boot/master/roles/galaxy_k8s_deployment/defaults/main.yml&query=$.galaxy_deps_version&label=galaxy-deps)
+
+[![Smoke Test](https://github.com/galaxyproject/galaxy-k8s-boot/actions/workflows/test-galaxy-gce.yml/badge.svg)](https://github.com/galaxyproject/galaxy-k8s-boot/actions/workflows/test-galaxy-gce.yml)<br/>
+[![Release](https://github.com/galaxyproject/galaxy-k8s-boot/actions/workflows/release.yaml/badge.svg)](https://github.com/galaxyproject/galaxy-k8s-boot/actions/workflows/release.yaml)
+
 
 ## Key Concepts
 
@@ -27,7 +56,7 @@ The [release_process.md](./release_process.md) file contains the design specific
 ## FAQ
 
 **Q**: Do we really need dev branches in each repository?<br/>
-**A**: Not really, but having all repositories be consistent simplifies state management in the workflows and we don't need to remember different processes depending on the repository.
+**A**: Not really, but having all repositories be consistent simplifies state management in the workflows and we don't need to remember different processes for each repository.
 
 
 
