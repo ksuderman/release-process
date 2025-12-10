@@ -26,7 +26,8 @@
                 'galaxy-helm-deps': { chart: 'galaxy-deps/Chart.yaml', type: 'helm', org: 'galaxyproject' },
                 'galaxykubeman-helm': { chart: 'galaxykubeman-helm/Chart.yaml', type: 'helm', org: 'galaxyproject' },
                 'galaxy-cvmfs-csi-helm': { chart: 'galaxy-cvmfs-csi/Chart.yaml', type: 'helm', org: 'cloudve' },
-                'galaxy-k8s-boot': { version: 'VERSION', defaults: 'roles/galaxy_k8s_deployment/defaults/main.yml', org: 'galaxyproject' }
+                'galaxy-k8s-boot': { version: 'VERSION', defaults: 'roles/galaxy_k8s_deployment/defaults/main.yml', org: 'galaxyproject' },
+                'galaxy-k8s-docker': { org: 'galaxyproject' }
             };
 
             const dashboard = document.getElementById('dashboard');
