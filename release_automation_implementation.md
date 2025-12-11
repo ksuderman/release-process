@@ -1,7 +1,7 @@
 # Release Automation Implementation Plan
 
 **Status**: PENDING REVIEW
-**Last Updated**: 2025-12-06
+**Last Updated**: 2025-12-10
 **Next Step**: Send plan out for team review before implementation begins
 
 ---
@@ -15,6 +15,9 @@
 | galaxy-helm | `test.yaml`, ~~`packaging.yml`~~ | `galaxy/Chart.yaml` | `packaging.yml` is deprecated, do not use |
 | galaxy-helm-deps | None | `galaxy-deps/Chart.yaml` | Needs all workflows |
 | galaxy-k8s-boot | None | `VERSION` file | Needs all workflows |
+| galaxykubeman-helm | `lint.yaml`, ~~`packaging.yml`~~ | `galaxykubeman/Chart.yaml` | `packaging.yml` uses deprecated `cloudve/helm-ci` |
+| galaxy-cvmfs-csi-helm | ~~`packaging.yml`~~ | `galaxy-cvmfs-csi/Chart.yaml` | `packaging.yml` uses deprecated `cloudve/helm-ci` |
+| galaxy-docker-k8s | None | Tags only (e.g., `v4.2.0`) | Ansible playbook; triggers Galaxy repo PR on release |
 | CloudVE/helm-charts | N/A | N/A | Helm chart repository (destination) |
 
 ### Deprecated Components (DO NOT USE)
@@ -27,6 +30,12 @@
 **galaxy-k8s-boot** (updated by upstream releases):
 - `bin/launch_vm.sh`: `GALAXY_CHART_VERSION` and `GALAXY_DEPS_VERSION`
 - `roles/galaxy_k8s_deployment/defaults/main.yml`: `galaxy_chart_version` and `galaxy_deps_version`
+
+**galaxy (upstream)** (updated by galaxy-docker-k8s releases):
+- `.k8s_ci.Dockerfile`: `GALAXY_PLAYBOOK_BRANCH` ARG (e.g., `v4.2.0`)
+
+**galaxy-helm-deps** (updated by galaxy-cvmfs-csi-helm releases):
+- `galaxy-deps/Chart.yaml`: `galaxy-cvmfs-csi` dependency version
 
 ---
 
@@ -944,6 +953,550 @@ jobs:
 
 ---
 
+### Phase 4a: galaxykubeman-helm Workflows
+
+The galaxykubeman-helm chart depends on galaxy-helm and is deployed to CloudVE/helm-charts. No other repositories depend on it.
+
+#### 4a.1 Create Test Workflow (K3S-based with K8s Version Matrix)
+
+**File**: `.github/workflows/test.yaml`
+
+```yaml
+name: Linting and deployment test on K3S
+on:
+  push:
+    branches: [master, dev]
+  pull_request: {}
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  linting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Helm
+        run: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+      - name: Update Helm dependencies
+        run: helm dependency update galaxykubeman/
+      - name: Helm lint
+        run: helm lint galaxykubeman/
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s-version:
+          - v1.28.15+k3s1
+          - v1.29.12+k3s1
+          - v1.30.8+k3s1
+          - v1.31.4+k3s1
+          - v1.32.0+k3s1
+    name: Test (K8s ${{ matrix.k8s-version }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        run: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+
+      - name: Start K3S (${{ matrix.k8s-version }})
+        uses: jupyterhub/action-k3s-helm@v3
+        with:
+          k3s-version: ${{ matrix.k8s-version }}
+          metrics-enabled: false
+          traefik-enabled: false
+
+      - name: Verify cluster
+        run: |
+          echo "Testing with Kubernetes version: ${{ matrix.k8s-version }}"
+          kubectl version
+          kubectl get nodes
+          helm version
+
+      - name: Update Helm dependencies
+        run: helm dependency update galaxykubeman/
+
+      - name: Install galaxykubeman (dry-run)
+        run: |
+          helm install galaxykubeman ./galaxykubeman \
+            --create-namespace \
+            --namespace galaxykubeman \
+            --dry-run
+
+      - name: Get all pods
+        if: always()
+        run: kubectl get pods -A
+```
+
+#### 4a.2 Create PR Validation Workflow
+
+**File**: `.github/workflows/pr-validation.yaml`
+
+Same structure as galaxy-helm (see Phase 2.2).
+
+#### 4a.3 Create Release Workflow
+
+**File**: `.github/workflows/release.yaml`
+
+Same structure as galaxy-helm (see Phase 2.3), with these modifications:
+- Chart path: `galaxykubeman/` instead of `galaxy/`
+- Chart name: `galaxykubeman` instead of `galaxy`
+- No downstream triggers (nothing depends on this chart)
+
+---
+
+### Phase 4b: galaxy-cvmfs-csi-helm Workflows
+
+The galaxy-cvmfs-csi-helm chart has no external dependencies but is a dependency of galaxy-helm-deps. When released, it should trigger a PR to update the dependency version in galaxy-helm-deps.
+
+#### 4b.1 Create Test Workflow (K3S-based with K8s Version Matrix)
+
+**File**: `.github/workflows/test.yaml`
+
+```yaml
+name: Linting and deployment test on K3S
+on:
+  push:
+    branches: [master, dev]
+  pull_request: {}
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  linting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Helm
+        run: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+      - name: Update Helm dependencies
+        run: helm dependency update galaxy-cvmfs-csi/
+      - name: Helm lint
+        run: helm lint galaxy-cvmfs-csi/
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s-version:
+          - v1.28.15+k3s1
+          - v1.29.12+k3s1
+          - v1.30.8+k3s1
+          - v1.31.4+k3s1
+          - v1.32.0+k3s1
+    name: Test (K8s ${{ matrix.k8s-version }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        run: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+
+      - name: Start K3S (${{ matrix.k8s-version }})
+        uses: jupyterhub/action-k3s-helm@v3
+        with:
+          k3s-version: ${{ matrix.k8s-version }}
+          metrics-enabled: false
+          traefik-enabled: false
+
+      - name: Verify cluster
+        run: |
+          echo "Testing with Kubernetes version: ${{ matrix.k8s-version }}"
+          kubectl version
+          kubectl get nodes
+          helm version
+
+      - name: Update Helm dependencies
+        run: helm dependency update galaxy-cvmfs-csi/
+
+      - name: Install galaxy-cvmfs-csi
+        run: |
+          helm install galaxy-cvmfs-csi ./galaxy-cvmfs-csi \
+            --create-namespace \
+            --namespace cvmfs \
+            --set cvmfscsi.cache.alien.enabled=false \
+            --wait \
+            --timeout=600s
+
+      - name: Verify CSI driver deployed
+        run: |
+          echo "Checking CVMFS CSI driver..."
+          kubectl get pods -n cvmfs
+          kubectl get csidrivers
+
+      - name: Get all pods
+        if: always()
+        run: kubectl get pods -A
+
+      - name: Get events
+        if: always()
+        run: kubectl get events -n cvmfs --sort-by='.lastTimestamp'
+```
+
+#### 4b.2 Create PR Validation Workflow
+
+**File**: `.github/workflows/pr-validation.yaml`
+
+Same structure as galaxy-helm (see Phase 2.2).
+
+#### 4b.3 Create Release Workflow
+
+**File**: `.github/workflows/release.yaml`
+
+Same structure as galaxy-helm (see Phase 2.3), with these modifications:
+- Chart path: `galaxy-cvmfs-csi/` instead of `galaxy/`
+- Chart name: `galaxy-cvmfs-csi` instead of `galaxy`
+- Trigger event: `update-cvmfs-csi` to galaxy-helm-deps instead of galaxy-k8s-boot
+
+Add to the `trigger-downstream` job:
+
+```yaml
+  trigger-downstream:
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger galaxy-helm-deps update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          repository: galaxyproject/galaxy-helm-deps
+          event-type: update-cvmfs-csi
+          client-payload: '{"version": "${{ needs.prepare.outputs.new_version }}"}'
+```
+
+#### 4b.4 Add Dependency Update Handler to galaxy-helm-deps
+
+**File**: `.github/workflows/update-dependencies.yaml` (in galaxy-helm-deps)
+
+```yaml
+name: Update Chart Dependencies
+on:
+  repository_dispatch:
+    types: [update-cvmfs-csi]
+  workflow_dispatch:
+    inputs:
+      dependency:
+        description: 'Which dependency to update'
+        required: true
+        type: choice
+        options:
+          - galaxy-cvmfs-csi
+      version:
+        description: 'New version'
+        required: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Determine dependency and version
+        id: params
+        run: |
+          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+            echo "dependency=galaxy-cvmfs-csi" >> $GITHUB_OUTPUT
+            echo "version=${{ github.event.client_payload.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "dependency=${{ inputs.dependency }}" >> $GITHUB_OUTPUT
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Chart.yaml dependency version
+        run: |
+          yq e '(.dependencies[] | select(.name == "${{ steps.params.outputs.dependency }}")).version = "${{ steps.params.outputs.version }}"' \
+            -i galaxy-deps/Chart.yaml
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          branch: update-${{ steps.params.outputs.dependency }}-${{ steps.params.outputs.version }}
+          title: "Update ${{ steps.params.outputs.dependency }} to ${{ steps.params.outputs.version }}"
+          body: |
+            Automated update triggered by release of ${{ steps.params.outputs.dependency }} v${{ steps.params.outputs.version }}.
+
+            ## Changes
+            - Updated `${{ steps.params.outputs.dependency }}` version in `galaxy-deps/Chart.yaml`
+
+            ## Triggered by
+            - Repository: ${{ github.event.client_payload.repository || 'manual' }}
+            - Workflow run: ${{ github.event.client_payload.run_url || 'N/A' }}
+          base: dev
+          labels: |
+            automated
+            dependency-update
+```
+
+---
+
+### Phase 4c: galaxy-docker-k8s Workflows
+
+The galaxy-docker-k8s repository is an Ansible playbook used when building the Galaxy Docker image. When released, it should trigger a PR to the upstream Galaxy repository to update the `GALAXY_PLAYBOOK_BRANCH` ARG in `.k8s_ci.Dockerfile`.
+
+**Note**: This repository uses tags (e.g., `v4.2.0`) rather than a VERSION file for versioning.
+
+#### 4c.1 Create Test Workflow
+
+**File**: `.github/workflows/test.yaml`
+
+```yaml
+name: Ansible Lint and Syntax Check
+on:
+  push:
+    branches: [master, dev]
+  pull_request: {}
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install ansible ansible-lint
+
+      - name: Install Ansible Galaxy requirements
+        run: ansible-galaxy install -r requirements.yml -p roles --force-with-deps
+
+      - name: Run ansible-lint
+        run: ansible-lint playbook.yml
+
+      - name: Syntax check
+        run: ansible-playbook playbook.yml --syntax-check
+```
+
+#### 4c.2 Create PR Validation Workflow
+
+**File**: `.github/workflows/pr-validation.yaml`
+
+Same structure as galaxy-helm (see Phase 2.2).
+
+#### 4c.3 Create Release Workflow
+
+**File**: `.github/workflows/release.yaml`
+
+```yaml
+name: Release
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      version-bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+
+jobs:
+  test:
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/test.yaml
+
+  prepare:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.bump.outputs.new_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine bump type
+        id: determine
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "bump_type=${{ inputs.version-bump }}" >> $GITHUB_OUTPUT
+          else
+            LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+            if echo "$LABELS" | grep -q '"major"'; then
+              echo "bump_type=major" >> $GITHUB_OUTPUT
+            elif echo "$LABELS" | grep -q '"minor"'; then
+              echo "bump_type=minor" >> $GITHUB_OUTPUT
+            else
+              echo "bump_type=patch" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Get latest tag and calculate new version
+        id: bump
+        run: |
+          # Get latest tag, default to v0.0.0 if none exist
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          CURRENT=${LATEST_TAG#v}
+          IFS='.' read -r major minor patch <<< "$CURRENT"
+
+          case "${{ steps.determine.outputs.bump_type }}" in
+            major) NEW_VERSION="$((major + 1)).0.0" ;;
+            minor) NEW_VERSION="${major}.$((minor + 1)).0" ;;
+            patch) NEW_VERSION="${major}.${minor}.$((patch + 1))" ;;
+          esac
+
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Bumping $CURRENT -> $NEW_VERSION"
+
+  approve-release:
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - run: echo "Release v${{ needs.prepare.outputs.new_version }} approved"
+
+  release:
+    needs: [prepare, approve-release]
+    runs-on: ubuntu-latest
+    env:
+      NEW_VERSION: ${{ needs.prepare.outputs.new_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+          git push origin "v${NEW_VERSION}"
+          gh release create "v${NEW_VERSION}" \
+            --title "release_${NEW_VERSION}" \
+            --generate-notes \
+            --latest
+
+      - name: Merge master to dev
+        run: |
+          git checkout dev
+          git merge master -m "Merge master back to dev after release v${NEW_VERSION}"
+          git push origin dev
+
+  trigger-downstream:
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Galaxy repository update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          repository: galaxyproject/galaxy
+          event-type: update-k8s-playbook
+          client-payload: '{"version": "v${{ needs.prepare.outputs.new_version }}"}'
+
+  notify:
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Slack notification
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "Galaxy Docker K8S Playbook Release",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Galaxy Docker K8S v${{ needs.prepare.outputs.new_version }}* has been released!\n<${{ github.server_url }}/${{ github.repository }}/releases/tag/v${{ needs.prepare.outputs.new_version }}|View Release>"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+```
+
+#### 4c.4 Create Update Handler in Galaxy Repository
+
+**File**: `.github/workflows/update-k8s-playbook.yaml` (in galaxyproject/galaxy)
+
+```yaml
+name: Update K8S Playbook Version
+on:
+  repository_dispatch:
+    types: [update-k8s-playbook]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'New playbook version (e.g., v4.3.0)'
+        required: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Determine version
+        id: params
+        run: |
+          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+            echo "version=${{ github.event.client_payload.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update .k8s_ci.Dockerfile
+        run: |
+          sed -i 's/^ARG GALAXY_PLAYBOOK_BRANCH=.*/ARG GALAXY_PLAYBOOK_BRANCH=${{ steps.params.outputs.version }}/' .k8s_ci.Dockerfile
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          branch: update-k8s-playbook-${{ steps.params.outputs.version }}
+          title: "Update K8S playbook to ${{ steps.params.outputs.version }}"
+          body: |
+            Automated update triggered by release of galaxy-docker-k8s ${{ steps.params.outputs.version }}.
+
+            ## Changes
+            - Updated `GALAXY_PLAYBOOK_BRANCH` in `.k8s_ci.Dockerfile` to `${{ steps.params.outputs.version }}`
+
+            ## Triggered by
+            - Repository: galaxyproject/galaxy-docker-k8s
+            - Workflow run: ${{ github.event.client_payload.run_url || 'N/A' }}
+          base: dev
+          labels: |
+            automated
+            k8s
+            docker
+```
+
+---
+
 ## Workflow Diagrams
 
 ### Development Flow
@@ -1051,6 +1604,32 @@ Each repository needs a `release` environment configured with:
 - [ ] Configure `release` environment
 - [ ] Add GCP and notification secrets
 
+### galaxykubeman-helm
+- [ ] Create `.github/workflows/test.yaml` (K3S smoke test with K8s matrix)
+- [ ] Create `.github/workflows/pr-validation.yaml`
+- [ ] Create `.github/workflows/release.yaml`
+- [ ] Remove deprecated `packaging.yml`
+- [ ] Configure `release` environment
+- [ ] Add notification secrets
+
+### galaxy-cvmfs-csi-helm
+- [ ] Create `.github/workflows/test.yaml` (K3S smoke test with K8s matrix)
+- [ ] Create `.github/workflows/pr-validation.yaml`
+- [ ] Create `.github/workflows/release.yaml`
+- [ ] Remove deprecated `packaging.yml`
+- [ ] Configure `release` environment
+- [ ] Add notification secrets
+
+### galaxy-docker-k8s
+- [ ] Create `.github/workflows/test.yaml` (Ansible lint)
+- [ ] Create `.github/workflows/pr-validation.yaml`
+- [ ] Create `.github/workflows/release.yaml`
+- [ ] Configure `release` environment
+- [ ] Add notification secrets
+
+### galaxy (upstream - for dependency update handler only)
+- [ ] Create `.github/workflows/update-k8s-playbook.yaml`
+
 ---
 
 ## Files Summary
@@ -1073,8 +1652,21 @@ Each repository needs a `release` environment configured with:
 | galaxy-k8s-boot | `.github/workflows/release.yaml` | Create |
 | galaxy-k8s-boot | `.github/workflows/update-dependencies.yaml` | Create |
 | galaxy-k8s-boot | `.github/workflows/version-dashboard.yaml` | Create |
+| galaxykubeman-helm | `.github/workflows/test.yaml` | Create (with K8s matrix) |
+| galaxykubeman-helm | `.github/workflows/pr-validation.yaml` | Create |
+| galaxykubeman-helm | `.github/workflows/release.yaml` | Create |
+| galaxykubeman-helm | `.github/workflows/packaging.yml` | Delete (deprecated) |
+| galaxy-cvmfs-csi-helm | `.github/workflows/test.yaml` | Create (with K8s matrix) |
+| galaxy-cvmfs-csi-helm | `.github/workflows/pr-validation.yaml` | Create |
+| galaxy-cvmfs-csi-helm | `.github/workflows/release.yaml` | Create |
+| galaxy-cvmfs-csi-helm | `.github/workflows/packaging.yml` | Delete (deprecated) |
+| galaxy-docker-k8s | `.github/workflows/test.yaml` | Create |
+| galaxy-docker-k8s | `.github/workflows/pr-validation.yaml` | Create |
+| galaxy-docker-k8s | `.github/workflows/release.yaml` | Create |
+| galaxy-helm-deps | `.github/workflows/update-dependencies.yaml` | Create |
+| galaxy (upstream) | `.github/workflows/update-k8s-playbook.yaml` | Create |
 
-**Total: 19 workflow files (16 new, 1 modified, plus 3 shared across repos = 22 files)**
+**Total: 31 workflow files across 7 repositories (plus shared files)**
 
 ---
 
@@ -1231,6 +1823,9 @@ REPOS=(
   "galaxyproject/galaxy-helm"
   "galaxyproject/galaxy-helm-deps"
   "galaxyproject/galaxy-k8s-boot"
+  "galaxyproject/galaxykubeman-helm"
+  "CloudVE/galaxy-cvmfs-csi-helm"
+  "galaxyproject/galaxy-docker-k8s"
 )
 
 for REPO in "${REPOS[@]}"; do

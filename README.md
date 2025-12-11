@@ -1,13 +1,14 @@
 # Refactoring the Galaxy Helm Release Process
 
-The purpose of this repository is to coordinate the refatoring of the release process for the following repositories:
+The purpose of this repository is to coordinate the refactoring of the release process for the following repositories:
 
 - [Galaxy Helm](https://github.com/galaxyproject/galaxy-helm) chart.
 - [Galaxy Deps Helm](https://github.com/galaxyproject/galaxy-helm-deps) chart.
 - [Galaxy K8S Boot](https://github.com/galaxyproject/galaxy-k8s-boot) playbook.
+- [Galaxy Kubeman Helm](https://github.com/galaxyproject/galaxykubeman-helm) chart.
+- [Galaxy CVMFS CSI Helm](https://github.com/CloudVE/galaxy-cvmfs-csi-helm) chart.
+- [Galaxy Docker K8S](https://github.com/galaxyproject/galaxy-docker-k8s) playbook.
 - [Cloudve Helm Repository](https://github.com/CloudVE/helm-charts).
-
-I haven't included Galaxy Kubeman, the CVMFS CSI chart, or the galaxy-k8s-docker playbook, but we like should for completeness.
 
 The goal is to make the process consistent across all repositories and automate the process as much as possible.  Ideally all we will need to do is approve pull requests and let the magic happen.  This requires a consistent repository layout and process even if it does not make much sense for the particular repository, e.g., we probably won't update the Galaxy dependencies very often, but by using the same release process we don't have to remember respository specific procedures.
 
@@ -38,6 +39,22 @@ The goal is to make the process consistent across all repositories and automate 
 
 [![Smoke Test](https://github.com/galaxyproject/galaxy-k8s-boot/actions/workflows/test-galaxy-gce.yml/badge.svg)](https://github.com/galaxyproject/galaxy-k8s-boot/actions/workflows/test-galaxy-gce.yml)<br/>
 [![Release](https://github.com/galaxyproject/galaxy-k8s-boot/actions/workflows/release.yaml/badge.svg)](https://github.com/galaxyproject/galaxy-k8s-boot/actions/workflows/release.yaml)
+
+### Galaxy Kubeman Helm Chart
+
+![Version](https://img.shields.io/github/v/release/galaxyproject/galaxykubeman-helm?label=chart%20version)
+![Galaxy](https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/galaxyproject/galaxykubeman-helm/master/galaxykubeman/Chart.yaml&query=$.appVersion&label=galaxy%20version)
+
+[![Lint](https://github.com/galaxyproject/galaxykubeman-helm/actions/workflows/lint.yaml/badge.svg)](https://github.com/galaxyproject/galaxykubeman-helm/actions/workflows/lint.yaml)
+
+### Galaxy CVMFS CSI Helm Chart
+
+![Version](https://img.shields.io/github/v/release/CloudVE/galaxy-cvmfs-csi-helm?label=chart%20version)
+![CVMFS CSI](https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/CloudVE/galaxy-cvmfs-csi-helm/master/galaxy-cvmfs-csi/Chart.yaml&query=$.appVersion&label=cvmfs-csi%20version)
+
+### Galaxy Docker K8S
+
+![Version](https://img.shields.io/github/v/release/galaxyproject/galaxy-docker-k8s?label=version)
 
 
 ## Key Concepts
