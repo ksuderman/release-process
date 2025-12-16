@@ -1,0 +1,6 @@
+---
+- name: Demo playbook
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - demo

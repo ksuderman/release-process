@@ -1,0 +1,4 @@
+---
+- name: Display versions
+  debug:
+    msg: "Using test-chart {{ test_chart_version }} and test-deps {{ test_deps_version }}"

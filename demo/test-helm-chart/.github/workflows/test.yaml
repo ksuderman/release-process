@@ -1,0 +1,32 @@
+name: Test
+on:
+  push:
+    branches: [master, dev]
+  pull_request: {}
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        run: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+
+      - name: Helm lint
+        run: helm lint chart/
+
+  mock-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mock deployment test
+        run: |
+          echo "Running mock deployment test..."
+          echo "Chart: $(grep '^name:' chart/Chart.yaml | awk '{print $2}')"
+          echo "Version: $(grep '^version:' chart/Chart.yaml | awk '{print $2}')"
+          sleep 2
+          echo "Mock test passed!"

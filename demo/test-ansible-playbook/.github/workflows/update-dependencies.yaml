@@ -1,0 +1,75 @@
+name: Update Dependencies
+on:
+  repository_dispatch:
+    types: [update-test-chart, update-test-deps]
+  workflow_dispatch:
+    inputs:
+      dependency:
+        description: 'Which dependency to update'
+        required: true
+        type: choice
+        options:
+          - test-chart
+          - test-deps
+      version:
+        description: 'New version'
+        required: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Determine dependency and version
+        id: params
+        run: |
+          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+            if [ "${{ github.event.action }}" == "update-test-chart" ]; then
+              echo "dependency=test-chart" >> $GITHUB_OUTPUT
+              echo "var_name=test_chart_version" >> $GITHUB_OUTPUT
+            else
+              echo "dependency=test-deps" >> $GITHUB_OUTPUT
+              echo "var_name=test_deps_version" >> $GITHUB_OUTPUT
+            fi
+            echo "version=${{ github.event.client_payload.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "dependency=${{ inputs.dependency }}" >> $GITHUB_OUTPUT
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            if [ "${{ inputs.dependency }}" == "test-chart" ]; then
+              echo "var_name=test_chart_version" >> $GITHUB_OUTPUT
+            else
+              echo "var_name=test_deps_version" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Update Ansible defaults
+        run: |
+          sed -i 's/^${{ steps.params.outputs.var_name }}:.*/${{ steps.params.outputs.var_name }}: "${{ steps.params.outputs.version }}"/' \
+            roles/demo/defaults/main.yml
+          echo "Updated roles/demo/defaults/main.yml:"
+          cat roles/demo/defaults/main.yml
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          branch: update-${{ steps.params.outputs.dependency }}-${{ steps.params.outputs.version }}
+          commit-message: "chore(deps): update ${{ steps.params.outputs.dependency }} to ${{ steps.params.outputs.version }}"
+          title: "chore(deps): update ${{ steps.params.outputs.dependency }} to ${{ steps.params.outputs.version }}"
+          body: |
+            Automated update triggered by release of ${{ steps.params.outputs.dependency }} v${{ steps.params.outputs.version }}.
+
+            ## Changes
+            - Updated `${{ steps.params.outputs.var_name }}` in `roles/demo/defaults/main.yml`
+
+            ## Triggered by
+            - Event: `${{ github.event_name }}`
+            - Action: `${{ github.event.action || 'manual' }}`
+          base: dev
+          labels: |
+            automated
+            dependency-update

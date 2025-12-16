@@ -1,0 +1,234 @@
+name: Release
+on:
+  pull_request:
+    types: [closed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      version-bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+
+# IMPORTANT: Update GITHUB_USER to your GitHub username
+env:
+  GITHUB_USER: "GITHUB_USER"
+
+jobs:
+  # Job 1: Run tests
+  test:
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/test.yaml
+
+  # Job 2: Prepare release
+  prepare:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.bump.outputs.new_version }}
+      bump_type: ${{ steps.determine.outputs.bump_type }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine bump type
+        id: determine
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "bump_type=${{ inputs.version-bump }}" >> $GITHUB_OUTPUT
+          else
+            LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+            if echo "$LABELS" | grep -q '"major"'; then
+              echo "bump_type=major" >> $GITHUB_OUTPUT
+            elif echo "$LABELS" | grep -q '"minor"'; then
+              echo "bump_type=minor" >> $GITHUB_OUTPUT
+            else
+              echo "bump_type=patch" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Calculate new version
+        id: bump
+        run: |
+          CURRENT=$(grep '^version:' chart/Chart.yaml | awk '{print $2}')
+          IFS='.' read -r major minor patch <<< "$CURRENT"
+
+          case "${{ steps.determine.outputs.bump_type }}" in
+            major) NEW_VERSION="$((major + 1)).0.0" ;;
+            minor) NEW_VERSION="${major}.$((minor + 1)).0" ;;
+            patch) NEW_VERSION="${major}.${minor}.$((patch + 1))" ;;
+          esac
+
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Bumping $CURRENT -> $NEW_VERSION"
+
+  # Job 3: Manual approval gate
+  approve-release:
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Approval gate
+        run: |
+          echo "Release v${{ needs.prepare.outputs.new_version }} approved"
+          echo "Proceeding with release..."
+
+  # Job 4: Execute release
+  release:
+    needs: [prepare, approve-release]
+    runs-on: ubuntu-latest
+    env:
+      NEW_VERSION: ${{ needs.prepare.outputs.new_version }}
+    steps:
+      # Generate token from GitHub App (bypasses branch protection rulesets)
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: test-helm-deps,test-helm-repo,test-ansible-playbook
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+          ref: master
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update Chart.yaml version
+        run: |
+          git pull origin master
+          sed -i "s/^version:.*/version: $NEW_VERSION/" chart/Chart.yaml
+          git add chart/Chart.yaml
+          git commit -m "chore(release): bump version to $NEW_VERSION"
+          git push origin master
+
+      - name: Install Helm
+        run: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+
+      - name: Package Helm chart
+        run: |
+          helm package chart/
+          ls -la *.tgz
+
+      - name: Push to test-helm-repo
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git clone https://x-access-token:${APP_TOKEN}@github.com/${{ env.GITHUB_USER }}/test-helm-repo.git /tmp/helm-repo
+          cp *.tgz /tmp/helm-repo/
+          cd /tmp/helm-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          helm repo index . --merge index.yaml
+          git add .
+          git commit -m "Add test-deps-${NEW_VERSION}"
+          git push
+
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+          git push origin "v${NEW_VERSION}"
+          gh release create "v${NEW_VERSION}" \
+            --title "release_${NEW_VERSION}" \
+            --generate-notes \
+            --latest
+
+      - name: Merge master to dev
+        run: |
+          git checkout dev
+          git pull origin dev
+          git merge master -m "chore: merge master back to dev after release v${NEW_VERSION}"
+          git push origin dev
+
+  # Job 5: Trigger downstream updates
+  trigger-downstream:
+    needs: [prepare, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: test-ansible-playbook
+
+      - name: Trigger test-ansible-playbook update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: ${{ env.GITHUB_USER }}/test-ansible-playbook
+          event-type: update-test-deps
+          client-payload: '{"version": "${{ needs.prepare.outputs.new_version }}"}'
+
+  # Job 6: Summary and Notifications
+  summary:
+    needs: [prepare, release, trigger-downstream]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Release summary
+        run: |
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: v${{ needs.prepare.outputs.new_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Chart published**: test-helm-repo" >> $GITHUB_STEP_SUMMARY
+          echo "- **Downstream triggered**: test-ansible-playbook" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify Slack
+        if: needs.release.result == 'success'
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "🚀 test-helm-deps v${{ needs.prepare.outputs.new_version }} Released",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Repository:*\n<https://github.com/${{ github.repository }}|${{ github.repository }}>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Version:*\nv${{ needs.prepare.outputs.new_version }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Release:*\n<https://github.com/${{ github.repository }}/releases/tag/v${{ needs.prepare.outputs.new_version }}|View Release>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Triggered by:*\n${{ github.actor }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
