@@ -1,0 +1,38 @@
+name: Test
+on:
+  push:
+    branches: [master, dev]
+  pull_request: {}
+  workflow_dispatch: {}
+  workflow_call: {}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ansible-lint
+        run: pip install ansible-lint
+
+      - name: Run ansible-lint
+        run: ansible-lint playbook.yml || echo "Lint warnings (non-fatal for demo)"
+
+  mock-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mock deployment test
+        run: |
+          echo "Running mock deployment test..."
+          echo "VERSION: $(cat VERSION)"
+          echo "test_chart_version: $(grep 'test_chart_version' roles/demo/defaults/main.yml)"
+          echo "test_deps_version: $(grep 'test_deps_version' roles/demo/defaults/main.yml)"
+          sleep 2
+          echo "Mock test passed!"

@@ -1,0 +1,3 @@
+# Default values for test-deps
+dependency:
+  enabled: false

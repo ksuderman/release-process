@@ -1,0 +1,10 @@
+apiVersion: v2
+name: test-deps
+description: A demo dependencies Helm chart for testing the release process
+type: application
+version: 1.0.0
+dependencies:
+  - name: galaxy-cvmfs-csi
+    version: "2.5.1"
+    repository: "https://cloudve.github.io/helm-charts"
+    condition: cvmfs.enabled

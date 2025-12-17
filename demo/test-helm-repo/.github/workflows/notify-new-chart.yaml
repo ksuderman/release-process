@@ -1,0 +1,83 @@
+name: Notify New Chart
+on:
+  push:
+    branches: [master]
+    paths:
+      - '*.tgz'
+      - 'index.yaml'
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect new charts
+        id: detect
+        run: |
+          # Find .tgz files added in this commit
+          NEW_CHARTS=$(git diff --name-only HEAD~1 HEAD -- '*.tgz' | tr '\n' ', ' | sed 's/,$//')
+
+          if [ -z "$NEW_CHARTS" ]; then
+            echo "No new charts detected"
+            echo "has_new_charts=false" >> $GITHUB_OUTPUT
+          else
+            echo "New charts: $NEW_CHARTS"
+            echo "has_new_charts=true" >> $GITHUB_OUTPUT
+            echo "charts=$NEW_CHARTS" >> $GITHUB_OUTPUT
+
+            # Extract chart names and versions for better display
+            CHART_LIST=""
+            for tgz in $(git diff --name-only HEAD~1 HEAD -- '*.tgz'); do
+              CHART_NAME=$(basename "$tgz" .tgz)
+              if [ -n "$CHART_LIST" ]; then
+                CHART_LIST="$CHART_LIST, $CHART_NAME"
+              else
+                CHART_LIST="$CHART_NAME"
+              fi
+            done
+            echo "chart_list=$CHART_LIST" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify Slack
+        if: steps.detect.outputs.has_new_charts == 'true'
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "📦 New Helm Chart Published",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Repository:*\n<https://github.com/${{ github.repository }}|${{ github.repository }}>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Chart(s):*\n${{ steps.detect.outputs.chart_list }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Commit:*\n<https://github.com/${{ github.repository }}/commit/${{ github.sha }}|${{ github.event.head_commit.message }}>"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

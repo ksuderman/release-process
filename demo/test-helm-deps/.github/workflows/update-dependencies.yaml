@@ -1,0 +1,69 @@
+name: Update Chart Dependencies
+on:
+  repository_dispatch:
+    types: [update-upstream-dep]
+  workflow_dispatch:
+    inputs:
+      dependency:
+        description: 'Which dependency to update'
+        required: true
+        type: choice
+        options:
+          - test-dependency
+      version:
+        description: 'New version'
+        required: true
+
+# IMPORTANT: Update GITHUB_USER to your GitHub username
+env:
+  GITHUB_USER: "GITHUB_USER"
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Determine dependency and version
+        id: params
+        run: |
+          if [ "${{ github.event_name }}" == "repository_dispatch" ]; then
+            echo "dependency=${{ github.event.client_payload.dependency }}" >> $GITHUB_OUTPUT
+            echo "version=${{ github.event.client_payload.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "dependency=${{ inputs.dependency }}" >> $GITHUB_OUTPUT
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Chart.yaml dependency version
+        run: |
+          yq e '(.dependencies[] | select(.name == "${{ steps.params.outputs.dependency }}")).version = "${{ steps.params.outputs.version }}"' \
+            -i chart/Chart.yaml
+          cat chart/Chart.yaml
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          branch: update-${{ steps.params.outputs.dependency }}-${{ steps.params.outputs.version }}
+          title: "chore(deps): update ${{ steps.params.outputs.dependency }} to ${{ steps.params.outputs.version }}"
+          body: |
+            Automated update triggered by release of ${{ steps.params.outputs.dependency }} v${{ steps.params.outputs.version }}.
+
+            ## Changes
+            - Updated `${{ steps.params.outputs.dependency }}` version in `chart/Chart.yaml`
+
+            ## Triggered by
+            - Event: `${{ github.event_name }}`
+          base: dev
+          labels: |
+            automated
+            dependency-update

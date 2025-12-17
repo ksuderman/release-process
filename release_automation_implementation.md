@@ -1,8 +1,18 @@
 # Release Automation Implementation Plan
 
 **Status**: PENDING REVIEW
-**Last Updated**: 2025-12-10
+**Last Updated**: 2025-12-12
 **Next Step**: Send plan out for team review before implementation begins
+
+### Recent Changes (2025-12-12)
+- **Phase 1.1**: Replaced PAT (`RELEASE_TOKEN`) with GitHub App authentication for better security and ruleset bypass support
+- **Phase 5**: Replaced classic branch protection with Repository Rulesets (allows GitHub App bypass while enforcing rules for all users)
+- **Release Workflow**: Added fixes discovered during demo testing:
+  - Added `ref: master` to checkout to get merge commit
+  - Added `git pull origin master` before version bump to prevent push rejection
+  - Added git config for external repo clones (helm-charts)
+
+> **Note**: The release workflow example in Phase 2.3 (galaxy-helm) demonstrates the complete GitHub App pattern. All other repository workflows (Phases 3, 4, 4a, 4b, 4c) should follow the same pattern, replacing `secrets.RELEASE_TOKEN` with the GitHub App token generation step using `actions/create-github-app-token@v1`.
 
 ---
 
@@ -43,13 +53,36 @@
 
 ### Phase 1: Prerequisites and Shared Components
 
-#### 1.1 Create PAT Secret
+#### 1.1 Create GitHub App for Release Automation
 
-**Action Required**: Create a GitHub Personal Access Token with the following scopes:
-- `repo` (full control of private repositories)
-- `workflow` (update GitHub Action workflows)
+**Action Required**: Create a GitHub App instead of a PAT for better security and to enable bypassing branch protection rulesets.
 
-Store as `RELEASE_TOKEN` in each repository's secrets.
+**Create the GitHub App** (Settings → Developer settings → GitHub Apps → New GitHub App):
+
+| Setting | Value |
+|---------|-------|
+| **Name** | `galaxy-release-bot` (or similar unique name) |
+| **Homepage URL** | `https://github.com/galaxyproject` |
+| **Webhook** | Uncheck "Active" (not needed) |
+| **Permissions** | Repository → Contents: **Read & Write** |
+| | Repository → Metadata: **Read-only** |
+| | Repository → Pull requests: **Read & Write** |
+| **Where can install** | Only on this account |
+
+After creating:
+1. Note the **App ID** (shown at top of app settings page)
+2. Generate a **Private Key** (scroll to "Private keys" section)
+3. **Install the App** on all repositories in the release ecosystem
+
+Store as secrets in each repository:
+- `RELEASE_APP_ID` - The App ID (a number)
+- `RELEASE_APP_PRIVATE_KEY` - Contents of the downloaded `.pem` file
+
+**Why GitHub App instead of PAT?**
+- Apps can be added to Repository Ruleset bypass lists, allowing automated releases to push to protected branches
+- App tokens are scoped per-repository and expire quickly
+- No need to manage personal token expiration
+- Better audit trail of automated actions
 
 #### 1.2 Configure Slack Webhook
 
@@ -410,10 +443,20 @@ jobs:
     env:
       NEW_VERSION: ${{ needs.prepare.outputs.new_version }}
     steps:
+      # Generate token from GitHub App (bypasses branch protection rulesets)
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: galaxy-helm,helm-charts,galaxy-k8s-boot
+
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.RELEASE_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
+          ref: master  # Explicitly checkout master to get merge commit
 
       - name: Configure git
         run: |
@@ -422,9 +465,10 @@ jobs:
 
       - name: Update Chart.yaml version
         run: |
+          git pull origin master  # Ensure we have latest (including merge commit)
           sed -i "s/^version:.*/version: $NEW_VERSION/" galaxy/Chart.yaml
           git add galaxy/Chart.yaml
-          git commit -m "Bump version to $NEW_VERSION"
+          git commit -m "chore(release): bump version to $NEW_VERSION"
           git push origin master
 
       - name: Install Helm
@@ -436,10 +480,14 @@ jobs:
           mv galaxy-${NEW_VERSION}.tgz /tmp/
 
       - name: Push to CloudVE/helm-charts
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          git clone https://x-access-token:${{ secrets.RELEASE_TOKEN }}@github.com/CloudVE/helm-charts.git /tmp/helm-charts
+          git clone https://x-access-token:${APP_TOKEN}@github.com/CloudVE/helm-charts.git /tmp/helm-charts
           cp /tmp/galaxy-${NEW_VERSION}.tgz /tmp/helm-charts/
           cd /tmp/helm-charts
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           helm repo index . --merge index.yaml
           git add .
           git commit -m "Add galaxy-${NEW_VERSION}"
@@ -467,10 +515,18 @@ jobs:
     needs: [prepare, release]
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: galaxy-k8s-boot
+
       - name: Trigger galaxy-k8s-boot update
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.RELEASE_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           repository: galaxyproject/galaxy-k8s-boot
           event-type: update-galaxy-chart
           client-payload: '{"version": "${{ needs.prepare.outputs.new_version }}"}'
@@ -1535,9 +1591,12 @@ dev → PR to master (with major/minor/patch label)
 
 ## Required Secrets
 
-| Repository | Secret Name | Purpose |
-|------------|-------------|---------|
-| All repos | `RELEASE_TOKEN` | PAT for cross-repo operations and pushing |
+**Recommended**: Store GitHub App secrets as **organization-level secrets** to avoid duplicating the private key across repositories. Grant access only to repositories that need release automation.
+
+| Scope | Secret Name | Purpose |
+|-------|-------------|---------|
+| Organization | `RELEASE_APP_ID` | GitHub App ID for release automation |
+| Organization | `RELEASE_APP_PRIVATE_KEY` | GitHub App private key (.pem file contents) |
 | All repos | `SLACK_WEBHOOK_URL` | Slack notifications to #galaxy-k8s-sig |
 | All repos | `SMTP_SERVER` | Email server address |
 | All repos | `SMTP_PORT` | Email server port |
@@ -1564,7 +1623,9 @@ Each repository needs a `release` environment configured with:
 ## Implementation Checklist
 
 ### Prerequisites
-- [ ] Create `RELEASE_TOKEN` PAT and add to all repos
+- [ ] Create GitHub App for release automation (see Phase 1.1)
+- [ ] Install GitHub App on all repositories
+- [ ] Add `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` secrets to all repos
 - [ ] Create Slack webhook for #galaxy-k8s-sig
 - [ ] Configure email secrets (SMTP) in all repos
 - [ ] Create `release` environment with required reviewers in all repos
@@ -1575,8 +1636,8 @@ Each repository needs a `release` environment configured with:
 - [ ] Create `.github/dependabot.yml`
 - [ ] Create `.github/CODEOWNERS`
 - [ ] Create required labels (major, minor, patch, dependencies, etc.)
-- [ ] Configure branch protection for `master`
-- [ ] Configure branch protection for `dev`
+- [ ] Configure repository rulesets for `master` (with GitHub App bypass)
+- [ ] Configure repository rulesets for `dev` (with GitHub App bypass)
 - [ ] Add version badges to README.md
 
 ### galaxy-helm
@@ -1740,43 +1801,58 @@ inputs:
 
 ---
 
-## Phase 5: Branch Protection Rules
+## Phase 5: Repository Rulesets
 
-Configure branch protection rules in each repository to enforce the release process.
+Configure repository rulesets (not classic branch protection) to enforce the release process. Rulesets are preferred because they support bypass lists for GitHub Apps, allowing the release bot to push to protected branches while enforcing rules for all other users including admins.
 
-### 5.1 Master Branch Protection
+### 5.1 Master Branch Ruleset
 
-**Settings** (GitHub → Repository → Settings → Branches → Add rule):
-
-| Setting | Value | Reason |
-|---------|-------|--------|
-| Branch name pattern | `master` | Protect the release branch |
-| Require a pull request before merging | ✅ Yes | No direct pushes |
-| Require approvals | ✅ 1 approval | Peer review required |
-| Dismiss stale PR approvals | ✅ Yes | Re-review after changes |
-| Require review from Code Owners | ✅ Yes | Designated maintainers |
-| Require status checks to pass | ✅ Yes | CI must pass |
-| Required status checks | `lint-pr-title`, `validate-release-pr`, `test` | |
-| Require branches to be up to date | ✅ Yes | Prevent merge conflicts |
-| Require conversation resolution | ✅ Yes | Address all feedback |
-| Restrict who can push | ✅ Yes | Only via PR |
-| Allow force pushes | ❌ No | Protect history |
-| Allow deletions | ❌ No | Protect branch |
-
-### 5.2 Dev Branch Protection
-
-**Settings**:
+**Create Ruleset** (GitHub → Repository → Settings → Rules → Rulesets → New ruleset):
 
 | Setting | Value | Reason |
 |---------|-------|--------|
-| Branch name pattern | `dev` | Protect the development branch |
-| Require a pull request before merging | ✅ Yes | No direct pushes |
-| Require approvals | ✅ 1 approval | Peer review |
-| Require status checks to pass | ✅ Yes | CI must pass |
-| Required status checks | `lint-pr-title`, `lint-commits`, `test` | |
-| Require branches to be up to date | ❌ No | Allow parallel PRs |
-| Allow force pushes | ❌ No | Protect history |
-| Allow deletions | ❌ No | Protect branch |
+| **Ruleset name** | `Protect master` | Descriptive name |
+| **Enforcement status** | Active | Enable immediately |
+| **Bypass list** | Add `galaxy-release-bot` (GitHub App) | Allow release automation |
+| **Target branches** | Include `refs/heads/master` | Protect release branch |
+
+**Rules to enable**:
+
+| Rule | Configuration | Reason |
+|------|---------------|--------|
+| Restrict deletions | ✅ Enabled | Protect branch from deletion |
+| Require a pull request | ✅ Enabled | No direct pushes |
+| → Required approvals | 1 | Peer review required |
+| → Dismiss stale reviews | ✅ Yes | Re-review after changes |
+| → Require review from Code Owners | ✅ Yes | Designated maintainers |
+| → Require conversation resolution | ✅ Yes | Address all feedback |
+| Require status checks | ✅ Enabled | CI must pass |
+| → Required checks | `lint-pr-title`, `validate-release-pr`, `lint`, `test` | |
+| → Require branches to be up to date | ✅ Yes | Prevent merge conflicts |
+| Block force pushes | ✅ Enabled | Protect history |
+
+### 5.2 Dev Branch Ruleset
+
+**Create Ruleset**:
+
+| Setting | Value | Reason |
+|---------|-------|--------|
+| **Ruleset name** | `Protect dev` | Descriptive name |
+| **Enforcement status** | Active | Enable immediately |
+| **Bypass list** | Add `galaxy-release-bot` (GitHub App) | Allow merge back after release |
+| **Target branches** | Include `refs/heads/dev` | Protect development branch |
+
+**Rules to enable**:
+
+| Rule | Configuration | Reason |
+|------|---------------|--------|
+| Restrict deletions | ✅ Enabled | Protect branch |
+| Require a pull request | ✅ Enabled | No direct pushes |
+| → Required approvals | 1 | Peer review |
+| Require status checks | ✅ Enabled | CI must pass |
+| → Required checks | `lint-pr-title`, `lint-commits`, `lint`, `test` | |
+| → Require branches to be up to date | ❌ No | Allow parallel PRs |
+| Block force pushes | ✅ Enabled | Protect history |
 
 ### 5.3 CODEOWNERS File
 
@@ -1811,13 +1887,23 @@ Create the following labels in each repository:
 | `automated` | `#ededed` | Automated PRs |
 | `work-in-progress` | `#fbca04` | WIP - do not merge |
 
-### 5.5 Branch Protection Setup Script
+### 5.5 Ruleset Setup Script
 
-Run this script using GitHub CLI to configure branch protection:
+Run this script using GitHub CLI to configure repository rulesets. Requires the GitHub App ID to be set as an environment variable.
 
 ```bash
 #!/bin/bash
-# configure-branch-protection.sh
+# configure-rulesets.sh
+#
+# Usage: RELEASE_APP_ID=123456 ./configure-rulesets.sh
+
+set -e
+
+if [ -z "${RELEASE_APP_ID}" ]; then
+    echo "ERROR: RELEASE_APP_ID environment variable is required"
+    echo "Usage: RELEASE_APP_ID=<app-id> ./configure-rulesets.sh"
+    exit 1
+fi
 
 REPOS=(
   "galaxyproject/galaxy-helm"
@@ -1828,29 +1914,99 @@ REPOS=(
   "galaxyproject/galaxy-docker-k8s"
 )
 
+# Bypass actors configuration (GitHub App)
+BYPASS_ACTORS="[{\"actor_id\": ${RELEASE_APP_ID}, \"actor_type\": \"Integration\", \"bypass_mode\": \"always\"}]"
+
+create_ruleset() {
+    local repo=$1
+    local name=$2
+    local branch=$3
+    local strict=$4
+    local checks=$5
+    local dismiss_stale=$6
+
+    echo "  Creating ruleset '${name}' for ${branch}..."
+
+    # Build status checks array
+    local status_checks=""
+    for check in $(echo "$checks" | jq -r '.[]'); do
+        if [ -n "$status_checks" ]; then
+            status_checks="${status_checks},"
+        fi
+        status_checks="${status_checks}{\"context\": \"${check}\", \"integration_id\": null}"
+    done
+
+    gh api -X POST "repos/${repo}/rulesets" --input - <<EOF
+{
+    "name": "${name}",
+    "target": "branch",
+    "enforcement": "active",
+    "bypass_actors": ${BYPASS_ACTORS},
+    "conditions": {
+        "ref_name": {
+            "include": ["refs/heads/${branch}"],
+            "exclude": []
+        }
+    },
+    "rules": [
+        {
+            "type": "pull_request",
+            "parameters": {
+                "required_approving_review_count": 1,
+                "dismiss_stale_reviews_on_push": ${dismiss_stale},
+                "require_code_owner_review": false,
+                "require_last_push_approval": false,
+                "required_review_thread_resolution": true
+            }
+        },
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": ${strict},
+                "required_status_checks": [${status_checks}]
+            }
+        },
+        {
+            "type": "non_fast_forward"
+        }
+    ]
+}
+EOF
+}
+
 for REPO in "${REPOS[@]}"; do
-  echo "Configuring $REPO..."
+    echo "Configuring $REPO..."
 
-  # Master branch protection
-  gh api -X PUT "repos/$REPO/branches/master/protection" \
-    -f required_status_checks='{"strict":true,"contexts":["lint-pr-title","validate-release-pr","test"]}' \
-    -f enforce_admins=false \
-    -f required_pull_request_reviews='{"dismiss_stale_reviews":true,"require_code_owner_reviews":true,"required_approving_review_count":1}' \
-    -f restrictions=null \
-    -f allow_force_pushes=false \
-    -f allow_deletions=false
+    # Delete existing rulesets
+    for id in $(gh api "repos/${REPO}/rulesets" --jq '.[].id' 2>/dev/null || echo ""); do
+        echo "  Deleting existing ruleset ${id}..."
+        gh api -X DELETE "repos/${REPO}/rulesets/${id}"
+    done
 
-  # Dev branch protection
-  gh api -X PUT "repos/$REPO/branches/dev/protection" \
-    -f required_status_checks='{"strict":false,"contexts":["lint-pr-title","lint-commits","test"]}' \
-    -f enforce_admins=false \
-    -f required_pull_request_reviews='{"required_approving_review_count":1}' \
-    -f restrictions=null \
-    -f allow_force_pushes=false \
-    -f allow_deletions=false
+    # Master branch ruleset (stricter)
+    create_ruleset \
+        "${REPO}" \
+        "Protect master" \
+        "master" \
+        "true" \
+        '["lint-pr-title", "lint-commits", "lint", "test", "validate-release-pr"]' \
+        "true"
 
-  echo "Done with $REPO"
+    # Dev branch ruleset (less strict)
+    create_ruleset \
+        "${REPO}" \
+        "Protect dev" \
+        "dev" \
+        "false" \
+        '["lint-pr-title", "lint-commits", "lint", "test"]' \
+        "false"
+
+    echo "Done with $REPO"
 done
+
+echo ""
+echo "Rulesets configured successfully!"
+echo "View rulesets: https://github.com/<org>/<repo>/settings/rules"
 ```
 
 ---
