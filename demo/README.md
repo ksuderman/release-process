@@ -27,7 +27,10 @@ This directory contains everything needed to demonstrate the release automation 
    - **Name**: `<your-username>-release-bot` (must be unique across GitHub)
    - **Homepage URL**: Your GitHub profile URL
    - **Webhook**: Uncheck "Active"
-   - **Permissions**: Repository → Contents: **Read & Write**, Metadata: **Read-only**
+   - **Permissions** (Repository):
+     - **Contents**: Read and write (for pushing version bumps, tags)
+     - **Pull requests**: Read and write (for `/approve` command)
+     - **Metadata**: Read-only (automatic)
    - **Where can install**: Only on this account
 3. Click **Create GitHub App**
 4. Note the **App ID** displayed at the top of the app settings page
@@ -84,7 +87,10 @@ If you prefer manual setup, follow these steps:
    - **Name**: `release-bot-demo` (must be unique across GitHub)
    - **Homepage URL**: Your GitHub profile URL
    - **Webhook**: Uncheck "Active"
-   - **Permissions**: Repository → Contents: **Read & Write**, Metadata: **Read-only**
+   - **Permissions** (Repository):
+     - **Contents**: Read and write (for pushing version bumps, tags)
+     - **Pull requests**: Read and write (for `/approve` command)
+     - **Metadata**: Read-only (automatic)
    - **Where can install**: Only on this account
 3. Click **Create GitHub App**
 4. Note the **App ID** displayed at the top of the app settings page
@@ -180,7 +186,11 @@ See [DEMO_SCRIPT.md](./DEMO_SCRIPT.md) for the step-by-step demonstration walkth
 ## Troubleshooting
 
 ### "Resource not accessible by integration" error
-The GitHub App token doesn't have the right permissions. Make sure the app has **Contents: Read & Write**.
+The GitHub App token doesn't have the right permissions. Check which operation failed:
+- **Pushing commits/tags**: App needs **Contents: Read and write**
+- **Approving PRs (`/approve`)**: App needs **Pull requests: Read and write**
+
+To add permissions: Settings → Developer settings → GitHub Apps → your app → Permissions & events
 
 ### "Actor must be part of the ruleset source" error
 The GitHub App is not installed on the repository. Re-run `setup.sh` or manually add the repo to the app installation.

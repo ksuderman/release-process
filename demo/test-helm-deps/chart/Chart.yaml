@@ -4,7 +4,7 @@ description: A demo dependencies Helm chart for testing the release process
 type: application
 version: 1.0.0
 dependencies:
-  - name: test-dependency
-    version: "1.0.0"
-    repository: "https://example.com/charts"
-    condition: dependency.enabled
+  - name: galaxy-cvmfs-csi
+    version: "2.5.1"
+    repository: "https://cloudve.github.io/helm-charts"
+    condition: cvmfs.enabled
