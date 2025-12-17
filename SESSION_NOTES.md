@@ -382,3 +382,49 @@ Add `SLACK_WEBHOOK_URL` to each repository:
 - ✅ Slack notifications on successful releases
 - ✅ Slack notifications for new Helm charts
 - ✅ Cross-repo dependency updates
+
+---
+
+## Session: 2025-12-16
+
+### Summary
+Fixed issues with the `/approve` command workflow discovered during live testing.
+
+### Issues Fixed
+
+1. **`/approve` command not triggering workflow**
+   - **Problem**: The workflow condition used exact match (`== '/approve'`) but GitHub comment bodies include trailing whitespace (`\r\n`)
+   - **Solution**: Changed to `startsWith(github.event.comment.body, '/approve')` to handle trailing whitespace
+   - **Files updated**: All three `auto-approve.yaml` files
+
+2. **GitHub App missing Pull requests permission**
+   - **Problem**: "Resource not accessible by integration" error when approving PRs
+   - **Cause**: The GitHub App only had `Contents: Read & Write` permission
+   - **Solution**: GitHub App needs **Pull requests: Read and write** permission to submit reviews
+   - **User action required**: Update GitHub App permissions in Settings → Developer settings → GitHub Apps
+
+### Files Modified
+- `demo/test-helm-chart/.github/workflows/auto-approve.yaml` - Fixed `startsWith` condition
+- `demo/test-helm-deps/.github/workflows/auto-approve.yaml` - Fixed `startsWith` condition
+- `demo/test-ansible-playbook/.github/workflows/auto-approve.yaml` - Fixed `startsWith` condition
+- `demo/setup.sh` - Made `SLACK_WEBHOOK_URL` conditional (only set if defined)
+- `demo/README.md` - Added Slack webhook to secrets file example, updated directory structure, added Features section
+- `demo/DEMO_SCRIPT.md` - Added Slack prerequisite, updated approval instructions
+
+### GitHub App Required Permissions
+The GitHub App now needs these permissions:
+- **Contents**: Read and write (for pushing version bumps, tags)
+- **Pull requests**: Read and write (for approving PRs via `/approve` command)
+- **Metadata**: Read-only (automatic)
+
+### Current Status
+**DEMO READY** - All workflows tested and documented:
+- ✅ `/approve` command works with trailing whitespace
+- ✅ GitHub App permissions documented
+- ✅ Slack notifications optional (conditional in setup.sh)
+- ✅ Documentation updated with Features section
+
+### Next Steps for User
+1. Update GitHub App to add **Pull requests: Read and write** permission
+2. Re-install app or accept new permissions
+3. Re-test `/approve` command on a PR
