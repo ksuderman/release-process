@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ADMINS="afgane nuwang"
-REPOS="test-helm-chart" "test-helm-deps" "test-ansible-playbook" "test-helm-repo")
+REPOS=("test-helm-chart" "test-helm-deps" "test-ansible-playbook" "test-helm-repo")
 
 for repo in "${REPOS[@]}" ; do
 	for admin in $ADMINS ; do
